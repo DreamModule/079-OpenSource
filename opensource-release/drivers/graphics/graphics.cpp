@@ -1,0 +1,372 @@
+#include "graphics.h"
+#include "io.h"
+
+uint8_t* Graphics::video_memory = (uint8_t*)0xA0000;
+bool Graphics::is_graphics_mode = false;
+
+
+static void write_registers(const uint8_t *regs) {
+    
+    outb(0x3C2, *regs);
+    regs++;
+
+    
+    for (uint8_t i = 0; i < 5; i++) {
+        outb(0x3C4, i);
+        outb(0x3C5, *regs);
+        regs++;
+    }
+
+    
+    outb(0x3D4, 0x03);
+    outb(0x3D5, inb(0x3D5) | 0x80);
+    outb(0x3D4, 0x11);
+    outb(0x3D5, inb(0x3D5) & ~0x80);
+
+    
+    for (uint8_t i = 0; i < 25; i++) {
+        outb(0x3D4, i);
+        outb(0x3D5, *regs);
+        regs++;
+    }
+
+    
+    for (uint8_t i = 0; i < 9; i++) {
+        outb(0x3CE, i);
+        outb(0x3CF, *regs);
+        regs++;
+    }
+
+    
+    for (uint8_t i = 0; i < 21; i++) {
+        inb(0x3DA);
+        outb(0x3C0, i);
+        outb(0x3C0, *regs);
+        regs++;
+    }
+
+    
+    inb(0x3DA);
+    outb(0x3C0, 0x20);
+}
+
+
+static const uint8_t g_320x200x256[] = {
+    
+    0x63,
+    
+    0x03, 0x01, 0x0F, 0x00, 0x0E,
+    
+    0x5F, 0x4F, 0x50, 0x82, 0x54, 0x80, 0xBF, 0x1F,
+    0x00, 0x41, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x9C, 0x0E, 0x8F, 0x28, 0x40, 0x96, 0xB9, 0xA3,
+    0xFF,
+    
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x05, 0x0F,
+    0xFF,
+    
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+    0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+    0x41, 0x00, 0x0F, 0x00, 0x00
+};
+
+
+static const uint8_t g_80x25_text[] = {
+    
+    0x67,
+    
+    0x03, 0x00, 0x03, 0x00, 0x02,
+    
+    0x5F, 0x4F, 0x50, 0x82, 0x55, 0x81, 0xBF, 0x1F,
+    0x00, 0x4F, 0x0D, 0x0E, 0x00, 0x00, 0x00, 0x50,
+    0x9C, 0x0E, 0x8F, 0x28, 0x1F, 0x96, 0xB9, 0xA3,
+    0xFF,
+    
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x0E, 0x00,
+    0xFF,
+    
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x14, 0x07,
+    0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F,
+    0x0C, 0x00, 0x0F, 0x08, 0x00
+};
+
+void Graphics::initialize() {
+    
+    is_graphics_mode = false;
+}
+
+
+static void setup_grayscale_palette() {
+    
+    
+    for (int i = 0; i < 256; i++) {
+        Graphics::set_palette(i, i, i, i);
+    }
+}
+
+void Graphics::set_mode_text() {
+    write_registers(g_80x25_text);
+    is_graphics_mode = false;
+}
+
+void Graphics::set_mode_graphics() {
+    write_registers(g_320x200x256);
+    is_graphics_mode = true;
+
+    
+    setup_grayscale_palette();
+}
+
+void Graphics::put_pixel(int x, int y, uint8_t color) {
+    if (x < 0 || x >= SCREEN_WIDTH || y < 0 || y >= SCREEN_HEIGHT) {
+        return;
+    }
+    video_memory[y * SCREEN_WIDTH + x] = color;
+}
+
+uint8_t Graphics::get_pixel(int x, int y) {
+    if (x < 0 || x >= SCREEN_WIDTH || y < 0 || y >= SCREEN_HEIGHT) {
+        return 0;
+    }
+    return video_memory[y * SCREEN_WIDTH + x];
+}
+
+void Graphics::draw_rect(int x, int y, int width, int height, uint8_t color) {
+    for (int dy = 0; dy < height; dy++) {
+        for (int dx = 0; dx < width; dx++) {
+            put_pixel(x + dx, y + dy, color);
+        }
+    }
+}
+
+void Graphics::clear_screen(uint8_t color) {
+    for (int i = 0; i < SCREEN_WIDTH * SCREEN_HEIGHT; i++) {
+        video_memory[i] = color;
+    }
+}
+
+void Graphics::set_palette(uint8_t index, uint8_t r, uint8_t g, uint8_t b) {
+    outb(0x3C8, index);
+    outb(0x3C9, r >> 2);  
+    outb(0x3C9, g >> 2);
+    outb(0x3C9, b >> 2);
+}
+
+
+static const uint8_t* get_font_char(char c) {
+    static const uint8_t font_space[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    static const uint8_t font_A[] = {0x00, 0x18, 0x24, 0x42, 0x7E, 0x42, 0x42, 0x00};
+    static const uint8_t font_B[] = {0x00, 0x7C, 0x42, 0x7C, 0x42, 0x42, 0x7C, 0x00};
+    static const uint8_t font_C[] = {0x00, 0x3C, 0x42, 0x40, 0x40, 0x42, 0x3C, 0x00};
+    static const uint8_t font_D[] = {0x00, 0x78, 0x44, 0x42, 0x42, 0x44, 0x78, 0x00};
+    static const uint8_t font_E[] = {0x00, 0x7E, 0x40, 0x7C, 0x40, 0x40, 0x7E, 0x00};
+    static const uint8_t font_F[] = {0x00, 0x7E, 0x40, 0x7C, 0x40, 0x40, 0x40, 0x00};
+    static const uint8_t font_G[] = {0x00, 0x3C, 0x42, 0x40, 0x4E, 0x42, 0x3C, 0x00};
+    static const uint8_t font_H[] = {0x00, 0x42, 0x42, 0x7E, 0x42, 0x42, 0x42, 0x00};
+    static const uint8_t font_I[] = {0x00, 0x3E, 0x08, 0x08, 0x08, 0x08, 0x3E, 0x00};
+    static const uint8_t font_K[] = {0x00, 0x44, 0x48, 0x70, 0x48, 0x44, 0x42, 0x00};
+    static const uint8_t font_L[] = {0x00, 0x40, 0x40, 0x40, 0x40, 0x40, 0x7E, 0x00};
+    static const uint8_t font_M[] = {0x00, 0x42, 0x66, 0x5A, 0x42, 0x42, 0x42, 0x00};
+    static const uint8_t font_N[] = {0x00, 0x42, 0x62, 0x52, 0x4A, 0x46, 0x42, 0x00};
+    static const uint8_t font_O[] = {0x00, 0x3C, 0x42, 0x42, 0x42, 0x42, 0x3C, 0x00};
+    static const uint8_t font_P[] = {0x00, 0x7C, 0x42, 0x42, 0x7C, 0x40, 0x40, 0x00};
+    static const uint8_t font_Q[] = {0x00, 0x3C, 0x42, 0x42, 0x52, 0x4A, 0x3C, 0x00};
+    static const uint8_t font_R[] = {0x00, 0x7C, 0x42, 0x42, 0x7C, 0x44, 0x42, 0x00};
+    static const uint8_t font_S[] = {0x00, 0x3C, 0x40, 0x3C, 0x02, 0x42, 0x3C, 0x00};
+    static const uint8_t font_T[] = {0x00, 0xFE, 0x10, 0x10, 0x10, 0x10, 0x10, 0x00};
+    static const uint8_t font_U[] = {0x00, 0x42, 0x42, 0x42, 0x42, 0x42, 0x3C, 0x00};
+    static const uint8_t font_V[] = {0x00, 0x42, 0x42, 0x42, 0x42, 0x24, 0x18, 0x00};
+    static const uint8_t font_W[] = {0x00, 0x42, 0x42, 0x42, 0x5A, 0x66, 0x42, 0x00};
+    static const uint8_t font_X[] = {0x00, 0x42, 0x24, 0x18, 0x18, 0x24, 0x42, 0x00};
+    static const uint8_t font_Y[] = {0x00, 0x82, 0x44, 0x28, 0x10, 0x10, 0x10, 0x00};
+    static const uint8_t font_Z[] = {0x00, 0x7E, 0x04, 0x08, 0x10, 0x20, 0x7E, 0x00};
+    static const uint8_t font_J[] = {0x00, 0x02, 0x02, 0x02, 0x42, 0x42, 0x3C, 0x00};
+    static const uint8_t font_0[] = {0x00, 0x3C, 0x46, 0x4A, 0x52, 0x62, 0x3C, 0x00};
+    static const uint8_t font_1[] = {0x00, 0x18, 0x28, 0x08, 0x08, 0x08, 0x3E, 0x00};
+    static const uint8_t font_2[] = {0x00, 0x3C, 0x42, 0x02, 0x3C, 0x40, 0x7E, 0x00};
+    static const uint8_t font_3[] = {0x00, 0x3C, 0x42, 0x0C, 0x02, 0x42, 0x3C, 0x00};
+    static const uint8_t font_4[] = {0x00, 0x08, 0x18, 0x28, 0x48, 0x7E, 0x08, 0x00};
+    static const uint8_t font_5[] = {0x00, 0x7E, 0x40, 0x7C, 0x02, 0x42, 0x3C, 0x00};
+    static const uint8_t font_6[] = {0x00, 0x3C, 0x40, 0x7C, 0x42, 0x42, 0x3C, 0x00};
+    static const uint8_t font_7[] = {0x00, 0x7E, 0x02, 0x04, 0x08, 0x10, 0x10, 0x00};
+    static const uint8_t font_8[] = {0x00, 0x3C, 0x42, 0x3C, 0x42, 0x42, 0x3C, 0x00};
+    static const uint8_t font_9[] = {0x00, 0x3C, 0x42, 0x42, 0x3E, 0x02, 0x3C, 0x00};
+    static const uint8_t font_minus[] = {0x00, 0x00, 0x00, 0x7E, 0x00, 0x00, 0x00, 0x00};
+    static const uint8_t font_dot[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x18, 0x00};
+    static const uint8_t font_colon[] = {0x00, 0x00, 0x18, 0x18, 0x00, 0x18, 0x18, 0x00};
+    static const uint8_t font_gt[] = {0x00, 0x08, 0x10, 0x20, 0x40, 0x20, 0x10, 0x08};
+    static const uint8_t font_lparen[] = {0x00, 0x0C, 0x10, 0x20, 0x20, 0x10, 0x0C, 0x00};
+    static const uint8_t font_rparen[] = {0x00, 0x30, 0x08, 0x04, 0x04, 0x08, 0x30, 0x00};
+    static const uint8_t font_lbracket[] = {0x00, 0x3E, 0x20, 0x20, 0x20, 0x20, 0x3E, 0x00};
+    static const uint8_t font_rbracket[] = {0x00, 0x7C, 0x04, 0x04, 0x04, 0x04, 0x7C, 0x00};
+    static const uint8_t font_slash[] = {0x00, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x00};
+    static const uint8_t font_underscore[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x00};
+    static const uint8_t font_hash[] = {0x00, 0x24, 0x7E, 0x24, 0x24, 0x7E, 0x24, 0x00};
+    static const uint8_t font_plus[] = {0x00, 0x00, 0x18, 0x18, 0x7E, 0x18, 0x18, 0x00};
+    static const uint8_t font_lt[] = {0x00, 0x10, 0x08, 0x04, 0x02, 0x04, 0x08, 0x10};
+    static const uint8_t font_comma[]     = {0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x18, 0x30};
+    
+    static const uint8_t font_excl[]      = {0x00, 0x18, 0x18, 0x18, 0x18, 0x00, 0x18, 0x00};
+    static const uint8_t font_question[]  = {0x00, 0x3C, 0x42, 0x04, 0x08, 0x00, 0x08, 0x00};
+    static const uint8_t font_star[]      = {0x00, 0x00, 0x24, 0x18, 0x7E, 0x18, 0x24, 0x00};
+    static const uint8_t font_equal[]     = {0x00, 0x00, 0x7E, 0x00, 0x7E, 0x00, 0x00, 0x00};
+    static const uint8_t font_lbrace[]    = {0x00, 0x0E, 0x08, 0x30, 0x08, 0x08, 0x0E, 0x00};
+    static const uint8_t font_rbrace[]    = {0x00, 0x70, 0x10, 0x0C, 0x10, 0x10, 0x70, 0x00};
+    static const uint8_t font_pipe[]      = {0x00, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x00};
+    static const uint8_t font_backslash[] = {0x00, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x00};
+    static const uint8_t font_at[]        = {0x00, 0x3C, 0x42, 0x5A, 0x5E, 0x40, 0x3C, 0x00};
+    static const uint8_t font_dollar[]    = {0x00, 0x08, 0x3E, 0x28, 0x3E, 0x0A, 0x3E, 0x08};
+    static const uint8_t font_percent[]   = {0x00, 0x62, 0x64, 0x08, 0x10, 0x26, 0x46, 0x00};
+    static const uint8_t font_amp[]       = {0x00, 0x30, 0x48, 0x30, 0x4A, 0x44, 0x3A, 0x00};
+    static const uint8_t font_caret[]     = {0x00, 0x18, 0x24, 0x42, 0x00, 0x00, 0x00, 0x00};
+    static const uint8_t font_tilde[]     = {0x00, 0x00, 0x00, 0x32, 0x4C, 0x00, 0x00, 0x00};
+    static const uint8_t font_backtick[]  = {0x00, 0x20, 0x10, 0x08, 0x00, 0x00, 0x00, 0x00};
+    static const uint8_t font_squote[]    = {0x00, 0x18, 0x18, 0x10, 0x00, 0x00, 0x00, 0x00};
+    static const uint8_t font_dquote[]    = {0x00, 0x24, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00};
+    static const uint8_t font_semi[]      = {0x00, 0x00, 0x18, 0x18, 0x00, 0x18, 0x18, 0x30};
+
+    switch(c) {
+        case ' ': return font_space;
+        case 'A': case 'a': return font_A;
+        case 'B': case 'b': return font_B;
+        case 'C': case 'c': return font_C;
+        case 'D': case 'd': return font_D;
+        case 'E': case 'e': return font_E;
+        case 'F': case 'f': return font_F;
+        case 'G': case 'g': return font_G;
+        case 'H': case 'h': return font_H;
+        case 'I': case 'i': return font_I;
+        case 'K': case 'k': return font_K;
+        case 'L': case 'l': return font_L;
+        case 'M': case 'm': return font_M;
+        case 'N': case 'n': return font_N;
+        case 'O': case 'o': return font_O;
+        case 'P': case 'p': return font_P;
+        case 'Q': case 'q': return font_Q;
+        case 'R': case 'r': return font_R;
+        case 'S': case 's': return font_S;
+        case 'T': case 't': return font_T;
+        case 'U': case 'u': return font_U;
+        case 'V': case 'v': return font_V;
+        case 'W': case 'w': return font_W;
+        case 'X': case 'x': return font_X;
+        case 'Y': case 'y': return font_Y;
+        case 'Z': case 'z': return font_Z;
+        case 'J': case 'j': return font_J;
+        case '0': return font_0;
+        case '1': return font_1;
+        case '2': return font_2;
+        case '3': return font_3;
+        case '4': return font_4;
+        case '5': return font_5;
+        case '6': return font_6;
+        case '7': return font_7;
+        case '8': return font_8;
+        case '9': return font_9;
+        case '-': return font_minus;
+        case '.': return font_dot;
+        case ':': return font_colon;
+        case ';': return font_semi;
+        case '>': return font_gt;
+        case '<': return font_lt;
+        case '(': return font_lparen;
+        case ')': return font_rparen;
+        case '[': return font_lbracket;
+        case ']': return font_rbracket;
+        case '{': return font_lbrace;
+        case '}': return font_rbrace;
+        case '/': return font_slash;
+        case '\\': return font_backslash;
+        case '_': return font_underscore;
+        case '#': return font_hash;
+        case '+': return font_plus;
+        case ',': return font_comma;
+        case '!': return font_excl;
+        case '?': return font_question;
+        case '*': return font_star;
+        case '=': return font_equal;
+        case '|': return font_pipe;
+        case '@': return font_at;
+        case '$': return font_dollar;
+        case '%': return font_percent;
+        case '&': return font_amp;
+        case '^': return font_caret;
+        case '~': return font_tilde;
+        case '`': return font_backtick;
+        case '\'': return font_squote;
+        case '"': return font_dquote;
+        default: return font_space;
+    }
+}
+
+void Graphics::draw_char(int x, int y, char c, uint8_t color) {
+    const uint8_t* glyph = get_font_char(c);
+
+    for (int row = 0; row < 8; row++) {
+        uint8_t line = glyph[row];
+        for (int col = 0; col < 8; col++) {
+            if (line & (0x80 >> col)) {
+                put_pixel(x + col, y + row, color);
+            }
+        }
+    }
+}
+
+
+void Graphics::draw_char_small(int x, int y, char c, uint8_t color) {
+    const uint8_t* glyph = get_font_char(c);
+
+    
+    for (int row = 0; row < 6; row++) {
+        uint8_t line = glyph[row + 1]; 
+        for (int col = 0; col < 4; col++) {
+            
+            if (line & (0x80 >> (col * 2))) {
+                put_pixel(x + col, y + row, color);
+            }
+        }
+    }
+}
+
+void Graphics::draw_text(int x, int y, const char* text, uint8_t color) {
+    int cursor_x = x;
+    while (*text) {
+        if (*text == '\n') {
+            cursor_x = x;
+            y += 8;
+        } else {
+            draw_char(cursor_x, y, *text, color);
+            cursor_x += 8;
+        }
+        text++;
+    }
+}
+
+
+void Graphics::draw_text_small(int x, int y, const char* text, uint8_t color) {
+    int cursor_x = x;
+    while (*text) {
+        if (*text == '\n') {
+            cursor_x = x;
+            y += 6;
+        } else {
+            draw_char_small(cursor_x, y, *text, color);
+            cursor_x += 4;
+        }
+        text++;
+    }
+}
+
+void Graphics::draw_image(int x, int y, int width, int height, const uint8_t* data) {
+    if (!is_graphics_mode || !data) {
+        return;
+    }
+
+    int index = 0;
+    for (int row = 0; row < height; row++) {
+        for (int col = 0; col < width; col++) {
+            uint8_t pixel = data[index++];
+            put_pixel(x + col, y + row, pixel);
+        }
+    }
+}
